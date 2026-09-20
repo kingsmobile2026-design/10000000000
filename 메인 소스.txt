@@ -343,7 +343,7 @@ local urls = {
     openingDictUrl = "https://gist.githubusercontent.com/GUMI2029/a98de0291fe638cc37bd6125edc71aac/raw/opening_dict.json",
     whitelistUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/000/refs/heads/main/%ED%85%8C%EC%8A%A4%ED%8A%B8",
     graphUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/--/refs/heads/main/%EB%81%84%EA%B8%80_%EA%B3%B5%EA%B2%A9_%EB%B0%A9%EC%96%B4_%EB%8B%A8%EC%9A%B4_%EA%B7%B8%EB%9E%98%ED%94%84_20260731211006.txt",
-    WordDBUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/-1111/refs/heads/main/Words"
+    WordDBUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/10000000000/refs/heads/main/%EB%81%84%EA%B8%80_%EB%8B%A8%EC%96%B4%20%EB%AA%A9%EB%A1%9D_20260920192024.txt"
 }
 
 ---------------------------------------------------------
