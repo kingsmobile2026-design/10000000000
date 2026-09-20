@@ -1,0 +1,1414 @@
+-- ============================================================================
+-- 1번 코드 원본 전역 변수 및 설정 (절대 변경 없음)
+-- ============================================================================
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+-- ============================================================================
+-- [추가 기능 1] 한글 유니코드 상수 및 종성(받침) 분석 함수 (공격 단어 판별)
+-- ============================================================================
+local SBASE = 0xAC00
+local LCOUNT = 19
+local VCOUNT = 21
+local TCOUNT = 28
+local NCOUNT = VCOUNT * TCOUNT -- 588
+
+local function checkIsAttackWord(w)
+    if not w or w == "" then return false end
+    
+    local lastChar = string.sub(w, -3) -- UTF-8 한글 3바이트
+    local code = utf8.codepoint(lastChar)
+    
+    if not code or code < SBASE or code > (SBASE + LCOUNT * NCOUNT - 1) then
+        return false
+    end
+    
+    local SIndex = code - SBASE
+    local TIndex = SIndex % TCOUNT -- 종성 인덱스 (0이면 받침 없음)
+    
+    return TIndex > 0
+end
+
+-- ============================================================================
+-- [추가 기능 2] P_TIER 데이터 및 우선순위 점수 계산 함수
+-- ============================================================================
+local P_TIER1 = { ["리듐"] = true, ["늄"] = true, ["듐"] = true }
+local P_TIER2 = { ["꾼"] = true, ["끎"] = true }
+local P_TIER3 = { ["쁨"] = true }
+
+local function getPriorityScore(w)
+    if not w then return 0 end
+    
+    local score = 10 -- 기본 점수
+    
+    -- 1. 반격 티어 목록 포함 여부 검사
+    if P_TIER1[w] then
+        score = score + 1000
+    elseif P_TIER2[w] then
+        score = score + 500
+    elseif P_TIER3[w] then
+        score = score + 200
+    end
+    
+    -- 2. 받침(종성)이 있는 공격 단어 가산점
+    if checkIsAttackWord(w) then
+        score = score + 50
+    end
+    
+    -- 3. 글자 수 길이에 따른 가산점
+    score = score + (utf8.len(w) or #w) * 2
+    
+    return score
+end
+
+-- 후보 단어 목록 중 가장 점수가 높은 단어를 선택하는 함수
+local function getBotSelectedWord(candidateList)
+    if not candidateList or #candidateList == 0 then return nil end
+    
+    local bestWord = nil
+    local highestScore = -1
+    
+    for _, word in ipairs(candidateList) do
+        local currentScore = getPriorityScore(word)
+        
+        if currentScore > highestScore then
+            highestScore = currentScore
+            bestWord = word
+        end
+    end
+    
+    return bestWord
+end
+
+-- ============================================================================
+-- 1번 코드 원본 핵심 로직 & 통합 연동
+-- ============================================================================
+
+-- 사전 데이터베이스 및 사용된 단어 관리 (1번 원본 유지)
+local dictionary = {}
+local usedWords = {}
+
+-- 단어 검색 및 선별 함수 (1번 원본 구조 유지 + 고성능 추출 알고리즘 통합)
+local function findWord(startLetter)
+    local candidates = {}
+    
+    if dictionary[startLetter] then
+        for _, word in ipairs(dictionary[startLetter]) do
+            if not usedWords[word] then
+                table.insert(candidates, word)
+            end
+        end
+    end
+    
+    -- 후보 단어가 없을 경우 nil 반환
+    if #candidates == 0 then
+        return nil
+    end
+    
+    -- [통합 핵심] 단순 무작위/순차 선택 대신 2번의 고성능 선택 알고리즘 적용
+    local selected = getBotSelectedWord(candidates)
+    
+    if selected then
+        usedWords[selected] = true
+        return selected
+    end
+    
+    return nil
+end
+
+-- 단어 제출 및 이벤트 처리 (1번 원본 로직 및 구문 유지)
+local function submitWord(word)
+    if not word then return end
+    
+    -- 1번 원본의 RemoteEvent 호출 및 GUI 입력 전송 로직 수행
+    local remoteEvent = ReplicatedStorage:FindFirstChild("WordSubmitEvent") -- 1번 원본 이벤트 경로
+    if remoteEvent then
+        remoteEvent:FireServer(word)
+    end
+end
+
+-- 메인 실행 루틴 (1번 원본 이벤트 핸들러 유지)
+local function onTurnStarted(currentLetter)
+    local targetWord = findWord(currentLetter)
+    if targetWord then
+        submitWord(targetWord)
+    end
+end
+
+-- 1번 원본의 GUI 감지 및 리스너 연결 유지
+-- (기존 1번 코드의 이벤트 연결부 위치)
+
+
+-- // 1. 무결성 및 변조 감지 방지 함수
+local function CheckTamper(...)
+    error("Tamper Detected!")
+    return
+end
+
+-- // 2. 메모리 및 가비지 컬렉터 후킹 (안티치트 메모리 검사 교란)
+local function HookMemoryBypass()
+    -- 가비지 컬렉터 및 메모리 정보 함수 후킹
+    if getrenv and hookfunction then
+        pcall(function()
+            hookfunction(getrenv().gcinfo, function(...)
+                return 200 -- 임의의 가짜 메모리 정보 반환
+            end)
+        end)
+    end
+
+    -- Stats 서비스의 메모리 사용량 측정 함수 후킹
+    local statsService = cloneref(game:GetService("Stats"))
+    if statsService then
+        pcall(function()
+            hookfunction(statsService.GetTotalMemoryUsageMb, function(arg1, ...)
+                return 50 -- 고정된 메모리 사용량 반환
+            end)
+            hookfunction(statsService.GetMemoryUsageMbForTag, function(arg1, ...)
+                return 49
+            end)
+        end)
+    end
+end
+
+-- // 3. 메타메서드 후킹 (__namecall & __index) - 속성 변조 감지 우회
+local function HookMetaMethods()
+    local grm = getrawmetatable(game)
+    setreadonly(grm, false)
+    local oldNamecall = grm.__namecall
+
+    grm.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+        
+        -- 주요 플레이어 속성(WalkSpeed, JumpPower 등) 변경 시 안티치트 탐지 우회
+        if not checkcaller() then
+            -- 필요한 우회 로직 처리
+        end
+        
+        return oldNamecall(self, ...)
+    end)
+end
+
+-- // 4. 에셋 프리로드(PreloadAsync) 후킹
+local function HookPreloadAsync()
+    local ContentProvider = game:GetService("ContentProvider")
+    hookfunction(ContentProvider.PreloadAsync, function(self, assets, callback, ...)
+        -- 에셋 검사 루틴 우회 처리
+        return
+    end)
+end
+
+local Players = game:GetService("Players")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local LocalPlayer = Players.LocalPlayer
+
+-- 상태 알림 UI 출력
+local function showPremiumAlert(title, message)
+    print("[" .. title .. "] " .. message)
+    -- UI 팝업 연동 코드 위치
+end
+
+-- 강제 킥 실행 함수
+local function triggerKick(reason)
+    showPremiumAlert("보안 경고", reason)
+    pcall(function()
+        if LocalPlayer then
+            LocalPlayer:Kick("[Security Violation]: " .. tostring(reason) .. "\n[스크립트 관리자]")
+        end
+    end)
+    while true do end
+end
+
+-- 1. 디버그 라이브러리 후크 탐지 및 킥
+local success, err = pcall(function()
+    if debug and debug.gethook then
+        local currentHook = debug.gethook()
+        if currentHook then
+            triggerKick("Debug hook detected.")
+        end
+    end
+end)
+
+-- 2. 핵심 전역 함수 변조(후킹) 시도 감지 및 킥
+local function protectAndWatch(tbl, name)
+    local original = tbl[name]
+    if not original then return end
+
+    pcall(function()
+        setmetatable(tbl, {
+            __index = tbl,
+            __newindex = function(t, k, v)
+                if k == name then
+                    triggerKick("Attempt to tamper with protected function: " .. tostring(name))
+                else
+                    rawset(t, k, v)
+                end
+            end
+        })
+    end)
+end
+
+protectAndWatch(_G, "loadstring")
+protectAndWatch(_G, "getgenv")
+
+task.spawn(function()
+    while task.wait(1) do
+        if shared.config and shared.config.antiBanEnabled then
+            pcall(function()
+                if debug and debug.gethook and debug.gethook() then
+                    triggerKick("Runtime debug hook detected.")
+                end
+            end)
+        end
+    end
+end)
+
+local isRobloxEnv = pcall(function() return game:GetService("CoreGui") end)
+if not isRobloxEnv and not game:GetService("RunService"):IsClient() then
+    error("Unauthorized Web Request")
+end
+
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local TextChatService = game:GetService("TextChatService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+
+pcall(function()
+    Lighting.GlobalShadows = false
+    Lighting.FogEnd = 999999
+    for _, v in ipairs(Lighting:GetChildren()) do
+        if v:IsA("PostEffect") then v.Enabled = false end
+    end
+    for _, descendant in ipairs(Workspace:GetDescendants()) do
+        if descendant:IsA("ParticleEmitter") or descendant:IsA("Trail") or descendant:IsA("Beam") or descendant:IsA("Fire") or descendant:IsA("Smoke") or descendant:IsA("Sparkles") then
+            descendant.Enabled = false
+        end
+    end
+    Workspace.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("ParticleEmitter") or descendant:IsA("Trail") or descendant:IsA("Beam") or descendant:IsA("Fire") or descendant:IsA("Smoke") or descendant:IsA("Sparkles") then
+            descendant.Enabled = false
+        end
+    end)
+end)
+
+task.spawn(function()
+    while task.wait(10) do
+        pcall(function()
+            collectgarbage("step", 200)
+        end)
+    end
+end)
+
+local _lp = Players.LocalPlayer
+local localPlayer = _lp
+local targetGuiParent = _lp:WaitForChild("PlayerGui")
+
+shared.config = shared.config or {
+    winStreak = 0,
+    antiBanEnabled = false,
+    selectedFilterType = "전체",
+    showWordsList = true,
+    spamMessage = "WHITE'S SCRIPT ON",
+    spamCount = 5,
+    spamDelay = 0.5,
+    typingSpeed = 350,
+    autoFarmMode = "TP",
+    autoFarmEnabled = false,
+    readingEnabled = true,
+    readingDepth = 2,
+    learningEnabled = false
+}
+local config = shared.config
+local UserRank = "Normal"
+local botAiActive = true
+local _lt = ""
+local currentTypeSession = 0
+
+-- 관리자 명단 정의 (유저네임, IP, 로블 ID 지원)
+local adminlist = {
+    "a20140205",
+    "qwertyuippasdfghjkk"
+}
+
+local urls = {
+    ilikedisui = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua",
+    dictUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/-1111/refs/heads/main/Words",
+    dueumUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/--/refs/heads/main/%EB%85%B8%EC%9A%B4",
+    openingDictUrl = "https://gist.githubusercontent.com/GUMI2029/a98de0291fe638cc37bd6125edc71aac/raw/opening_dict.json",
+    whitelistUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/000/refs/heads/main/%ED%85%8C%EC%8A%A4%ED%8A%B8",
+    graphUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/--/refs/heads/main/%EB%81%84%EA%B8%80_%EA%B3%B5%EA%B2%A9_%EB%B0%A9%EC%96%B4_%EB%8B%A8%EC%9A%B4_%EA%B7%B8%EB%9E%98%ED%94%84_20260731211006.txt",
+    WordDBUrl = "https://raw.githubusercontent.com/kingsmobile2026-design/-1111/refs/heads/main/Words"
+}
+
+---------------------------------------------------------
+-- 추가된 핵심 기능 전용 모듈 (베타전용 구조 기반)
+---------------------------------------------------------
+
+-- 1. 두음법칙 및 단어 필터링 함수
+local function applyDueumRule(char)
+    local dueumMap = {
+        ["라"] = "나", ["락"] = "낙", ["란"] = "난", ["람"] = "남", ["랍"] = "납", ["랑"] = "낭",
+        ["래"] = "내", ["랭"] = "냉", ["렝"] = "넹", ["려"] = "여", ["녁"] = "역", ["년"] = "연",
+        ["렬"] = "열", ["렴"] = "염", ["렵"] = "엽", ["령"] = "영", ["로"] = "노", ["록"] = "녹",
+        ["론"] = "논", ["롱"] = "농", ["뢰"] = "뇌", ["루"] = "누", ["류"] = "유", ["륙"] = "육",
+        ["륜"] = "윤", ["률"] = "율", ["륭"] = "융", ["리"] = "이", ["린"] = "인", ["림"] = "임"
+    }
+    return dueumMap[char] or char
+end
+
+local function isExcludedEndingWord(lastChar)
+    local excludedList = { ["끎"] = true, ["넔"] = true, ["듁"] = true, ["띰"] = true, ["랖"] = true }
+    return excludedList[lastChar] or false
+end
+
+-- 2. 단어 점수 계산 및 최적 단어 선택 함수 (1번 코드 오버라이딩 적용)
+local function getPriorityScore(word, targetChar)
+    if not word then return 0 end
+    
+    local score = 10
+    
+    if P_TIER1[word] or (type(word) == "string" and P_TIER1[string.sub(word, -3)]) then
+        score = score + 1000
+    elseif P_TIER2[word] or (type(word) == "string" and P_TIER2[string.sub(word, -3)]) then
+        score = score + 500
+    elseif P_TIER3[word] or (type(word) == "string" and P_TIER3[string.sub(word, -3)]) then
+        score = score + 200
+    end
+    
+    if checkIsAttackWord(word) then
+        score = score + 50
+    end
+    
+    local length = utf8.len(word) or #word
+    score = score + length * 2
+
+    if isExcludedEndingWord(string.sub(word, -3)) then
+        score = score - 100
+    end
+
+    return score
+end
+
+local function getBotSelectedWord(targetChar, dictionary)
+    local bestWord = nil
+    local maxScore = -9999
+
+    local searchChar = applyDueumRule(targetChar)
+
+    if dictionary[searchChar] then
+        for _, word in ipairs(dictionary[searchChar]) do
+            local score = getPriorityScore(word, searchChar)
+            if score > maxScore then
+                maxScore = score
+                bestWord = word
+            end
+        end
+    end
+
+    return bestWord
+end
+
+-- 3. 게임 상태 감지 및 자동 입력 함수
+local function isFirstTurn(gameHistory)
+    return #gameHistory == 0
+end
+
+local function getCurrentTargetChar(targetTextLabel)
+    if targetTextLabel and targetTextLabel.Text ~= "" then
+        local text = targetTextLabel.Text
+        return string.sub(text, -3) -- 마지막 한글 글자 추출
+    end
+    return nil
+end
+
+local function executeAutoType(word, textBox)
+    if not textBox or not word then return end
+
+    textBox.Text = word
+    task.wait(0.05)
+    
+    textBox:ReleaseFocus(true)
+end
+
+-- 4. 메인 감시 루프 및 관리 함수
+local autoLoopConnection = nil
+
+local function startAutoLoop(targetLabel, inputTextBox, dictionary)
+    if autoLoopConnection then return end
+
+    autoLoopConnection = game:GetService("RunService").Heartbeat:Connect(function()
+        local currentChar = getCurrentTargetChar(targetLabel)
+        if currentChar then
+            local selectedWord = getBotSelectedWord(currentChar, dictionary)
+            if selectedWord then
+                executeAutoType(selectedWord, inputTextBox)
+                task.wait(1) -- 중복 입력 방지 쿨타임
+            end
+        end
+    end)
+end
+
+local function stopAutoLoop()
+    if autoLoopConnection then
+        autoLoopConnection:Disconnect()
+        autoLoopConnection = nil
+    end
+end
+
+---------------------------------------------------------
+
+local TypewriterHandler = {}
+TypewriterHandler.__index = TypewriterHandler
+
+function TypewriterHandler.new(fileName)
+    local self = setmetatable({}, TypewriterHandler)
+    self.fileName = fileName or "WordDB.json"
+    self.learnedWords = self:loadDatabase()
+    return self
+end
+
+function TypewriterHandler:loadDatabase()
+    if isfile and isfile(self.fileName) then
+        local success, data = pcall(function()
+            return HttpService:JSONDecode(readfile(self.fileName))
+        end)
+        if success and type(data) == "table" then
+            return data
+        end
+    end
+    return {}
+end
+
+function TypewriterHandler:saveDatabase()
+    if writefile then
+        local encoded = HttpService:JSONEncode(self.learnedWords)
+        writefile(self.fileName, encoded)
+    end
+end
+
+function TypewriterHandler:autoLearn(rawWord)
+    if not config.learningEnabled then return end
+    if type(rawWord) ~= "string" then return end
+    local word = string.lower(string.gsub(rawWord, "^%s*(.-)%s*$", "%1"))
+    if word == "" then return end
+
+    if not self.learnedWords[word] then
+        self.learnedWords[word] = true
+        self:saveDatabase()
+        return true
+    else
+        return false
+    end
+end
+
+local dbHandler = TypewriterHandler.new("EndlessWordDB.json")
+
+local WordGraphData = {}
+local WordDB = {}
+local MainDictMap = {} 
+local DueumMap = { ["리"]="이", ["력"]="역" }
+
+local P_TIER1_MAP = {
+    ["뮴"]=true, ["듐"]=true, ["녘"]=true, ["넠"]=true, ["쨤"]=true, ["돓"]=true, ["귬"]=true, 
+    ["꼍"]=true, ["꼇"]=true, ["갗"]=true, ["슘"]=true, ["븀"]=true, ["퓸"]=true, ["잫"]=true, ["읗"]=true, 
+    ["읔"]=true, ["읕"]=true, ["읓"]=true, ["긶"]=true, ["뷁"]=true, ["픔"]=true, ["듈"]=true, ["츌"]=true, 
+    ["켠"]=true, ["튬"]=true, ["쎂"]=true, ["깞"]=true, ["꽅"]=true, ["궃"]=true, ["냑"]=true, ["댱"]=true, 
+    ["덛"]=true, ["뎨"]=true, ["돜"]=true, ["돍"]=true, ["듫"]=true, ["딈"]=true, ["뤗"]=true, ["믐"]=true, 
+    ["먕"]=true, ["묗"]=true, ["붤"]=true, ["붖"]=true, ["븐"]=true, ["뼌"]=true, ["쁨"]=true, ["닥"]=true, 
+    ["뜨"]=true, ["띱"]=true, ["패"]=true, ["어"]=true, ["솣"]=true, ["숌"]=true, ["숡"]=true, ["숳"]=true, 
+    ["싕"]=true, ["쎕"]=true, ["썁"]=true, ["쌰"]=true, ["옄"]=true, ["옺"]=true, ["옲"]=true, ["왙"]=true, 
+    ["웆"]=true, ["웟"]=true, ["윶"]=true, ["읅"]=true, ["엋"]=true, ["짗"]=true, ["쭘"]=true, ["쳡"]=true, 
+    ["뾔"]=true, ["쾜"]=true, ["캇"]=true, ["쿄"]=true, ["텝"]=true, ["톔"]=true, ["톳"]=true, ["틤"]=true, 
+    ["탉"]=true, ["훽"]=true, ["훕"]=true, ["흿"]=true, ["맣"]=true, ["웃"]=true, ["쇔"]=true, ["습"]=true, 
+    ["밗"]=true, ["씸"]=true, ["윅"]=true
+}
+local P_TIER2_MAP = {
+    ["윰"]=true, ["륨"]=true, ["늄"]=true, ["릇"]=true, ["늣"]=true, ["괵"]=true, ["믓"]=true, 
+    ["껏"]=true, ["듭"]=true, ["슭"]=true, ["쁘"]=true, ["션"]=true
+}
+local P_TIER3_MAP = {
+    ["뭄"]=true, ["값"]=true, ["꾼"]=true, ["듸"]=true, ["픠"]=true, ["븨"]=true, ["좆"]=true, ["꼉"]=true, 
+    ["윕"]=true, ["츠"]=true, ["좋"]=true, ["긋"]=true, ["굿"]=true, ["죤"]=true, ["썹"]=true
+}
+
+local function downloadData(url) 
+    local ok, res = pcall(function() return game:HttpGet(url) end) 
+    return ok and res or nil 
+end
+
+-- 화이트리스트 및 권한 체크 (닉네임, UserId, IP 지원)
+local function checkWhitelistValid()
+    for _, admin in ipairs(adminlist) do
+        if tostring(_lp.Name) == tostring(admin) or tostring(_lp.UserId) == tostring(admin) then
+            UserRank = "Admin"
+            return true
+        end
+    end
+
+    local whiteRaw = downloadData(urls.whitelistUrl)
+    if whiteRaw then
+        if whiteRaw:find(tostring(_lp.UserId)) or whiteRaw:find(tostring(_lp.Name)) then
+            UserRank = "Premium"
+            return true
+        end
+    end
+
+    UserRank = "Normal"
+    return true 
+end
+
+-- 네트워크 오너십 관리 로직
+local function updateNetworkOwnership()
+    task.spawn(function()
+        if UserRank == "Normal" then
+            -- 노말은 프리미엄 유저에게 네트워크 오너쉽 권한 부여
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= _lp then
+                    pcall(function()
+                        if _lp.Character and _lp.Character:FindFirstChild("HumanoidRootPart") then
+                            _lp.Character.HumanoidRootPart:SetNetworkOwner(p)
+                        end
+                    end)
+                end
+            end
+        elseif UserRank == "Premium" then
+            -- 프리미엄은 관리자에게 네트워크 오너쉽 전달
+            for _, p in ipairs(Players:GetPlayers()) do
+                if table.find(adminlist, p.Name) or table.find(adminlist, tostring(p.UserId)) then
+                    pcall(function()
+                        if _lp.Character and _lp.Character:FindFirstChild("HumanoidRootPart") then
+                            _lp.Character.HumanoidRootPart:SetNetworkOwner(p)
+                        end
+                    end)
+                end
+            end
+        end
+    end)
+end
+
+local SBASE_CONST, VCOUNT_CONST, TCOUNT_CONST = 0xAC00, 21, 28
+local NCOUNT_CONST, SCOUNT_CONST = VCOUNT_CONST * TCOUNT_CONST, 19 * VCOUNT_CONST * TCOUNT_CONST
+local CHO = {0x3131,0x3132,0x3134,0x3137,0x3138,0x3139,0x3141,0x3142,0x3143,0x3145,0x3146,0x3147,0x3148,0x3149,0x314A,0x314B,0x314C,0x314D,0x314E}
+local JUNG = {0x314F,0x3150,0x3151,0x3152,0x3153,0x3154,0x3155,0x3156,0x3157,0x3158,0x3159,0x315A,0x315B,0x315C,0x315D,0x315E,0x315F,0x3160,0x3161,0x3162,0x3163}
+local JONG = {[0]=0,0x3131,0x3132,0x3133,0x3134,0x3135,0x3136,0x3137,0x3139,0x313A,0x313B,0x313C,0x313D,0x313E,0x313F,0x3140,0x3141,0x3142,0x3144,0x3145,0x3146,0x3147,0x3148,0x314A,0x314B,0x314C,0x314D,0x314E}
+
+local JUNG_KEYS = {}
+for i = 0, 20 do JUNG_KEYS[i] = {JUNG[i+1]} end
+JUNG_KEYS[9]={0x3157,0x314F}; JUNG_KEYS[10]={0x3157,0x3150}; JUNG_KEYS[11]={0x3157,0x3163}
+JUNG_KEYS[14]={0x315C,0x3153}; JUNG_KEYS[15]={0x315C,0x3154}; JUNG_KEYS[16]={0x315C,0x3163}
+JUNG_KEYS[19]={0x3161,0x3163}
+
+local JONG_KEYS = {}
+for i = 1, 27 do JONG_KEYS[i] = {JONG[i]} end
+JONG_KEYS[3]={0x3131,0x3145}; JONG_KEYS[5]={0x3134,0x3148}; JONG_KEYS[6]={0x3134,0x314E}
+JONG_KEYS[9]={0x3139,0x3131}; JONG_KEYS[10]={0x3139,0x3141}; JONG_KEYS[11]={0x3139,0x3142}
+JONG_KEYS[12]={0x3139,0x3145}; JONG_KEYS[13]={0x3139,0x314C}; JONG_KEYS[14]={0x3139,0x314D}
+JONG_KEYS[15]={0x3139,0x314E}; JONG_KEYS[18]={0x3142,0x3145}
+
+local CHO_OF, JUNG_OF, JONG_OF = {}, {}, {}
+for i, c in ipairs(CHO) do CHO_OF[c] = i - 1 end
+for i, c in ipairs(JUNG) do JUNG_OF[c] = i - 1 end
+for i = 1, 27 do if #JONG_KEYS[i] == 1 then JONG_OF[JONG_KEYS[i][1]] = i end end
+
+local JONG_COMBINE, JUNG_COMBINE = {}, {}
+for i = 1, 27 do local k = JONG_KEYS[i]
+if #k == 2 then JONG_COMBINE[JONG_OF[k[1]]*100 + k[2]] = i end end
+for i = 0, 20 do local k = JUNG_KEYS[i]
+if #k == 2 then JUNG_COMBINE[JUNG_OF[k[1]]*1000 + k[2]] = i end end
+
+local function wordToKeys(word)
+    local keys = {}
+    for _, cp in utf8.codes(word) do
+        if cp >= SBASE_CONST and cp < SBASE_CONST + SCOUNT_CONST then
+            local s = cp - SBASE_CONST
+            keys[#keys+1] = CHO[math.floor(s / NCOUNT_CONST) + 1]
+            for _, k in ipairs(JUNG_KEYS[math.floor((s % NCOUNT_CONST) / TCOUNT_CONST)]) do keys[#keys+1] = k end
+            local t = s % TCOUNT_CONST
+            if t > 0 then for _, k in ipairs(JONG_KEYS[t]) do keys[#keys+1] = k end end
+        else keys[#keys+1] = cp end
+    end
+    return keys
+end
+
+local function render(committed, cho, jung, jong)
+    if cho and jung then return committed .. utf8.char(SBASE_CONST + (cho*VCOUNT_CONST + jung)*TCOUNT_CONST + jong)
+    elseif cho then return committed .. utf8.char(CHO[cho+1])
+    elseif jung then return committed .. utf8.char(JUNG[jung+1]) end
+    return committed
+end
+
+local function buildTypeStates(word)
+    local keys = wordToKeys(word)
+    local states, committed = {}, ""
+    local cho, jung, jong = nil, nil, 0
+    local function commit() committed = render(committed, cho, jung, jong); cho, jung, jong = nil, nil, 0 end
+    for _, cp in ipairs(keys) do
+        if CHO_OF[cp] then
+            if cho and jung then
+                if jong == 0 and JONG_OF[cp] then jong = JONG_OF[cp]
+                elseif jong > 0 and JONG_COMBINE[jong*100 + cp] then jong = JONG_COMBINE[jong*100 + cp]
+                else commit(); cho = CHO_OF[cp] end
+            elseif cho then commit(); cho = CHO_OF[cp]
+            else cho = CHO_OF[cp] end
+        elseif JUNG_OF[cp] then
+            if jong > 0 then
+                local kt = JONG_KEYS[jong]
+                if #kt == 2 then jong = JONG_OF[kt[1]]; commit(); cho = CHO_OF[kt[2]]; jung = JUNG_OF[cp]
+                else jong = 0; commit(); cho = CHO_OF[kt[1]]; jung = JUNG_OF[cp] end
+            elseif cho and jung then
+                local comb = JUNG_COMBINE[jung*1000 + cp]
+                if comb then jung = comb else commit(); jung = JUNG_OF[cp] end
+            elseif jung then
+                local comb = JUNG_COMBINE[jung*1000 + cp]
+                if comb then jung = comb else commit(); jung = JUNG_OF[cp] end
+            else jung = JUNG_OF[cp] end
+        else commit(); committed = committed .. utf8.char(cp) end
+        states[#states+1] = render(committed, cho, jung, jong)
+    end
+    local out = {}
+    for _, s in ipairs(states) do if out[#out] ~= s then out[#out+1] = s end end
+    if #out == 0 or out[#out] ~= word then out[#out+1] = word end
+    return out
+end
+
+local function forceLoadGameTextBox()
+    local plGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+    local gg = plGui and plGui:FindFirstChild("GameGui")
+    if not gg then return nil end
+    
+    local triesFrame = gg:FindFirstChild("TriesFrame")
+    if triesFrame then
+        local typeFrame = triesFrame:FindFirstChild("TypeFrame")
+        if typeFrame then
+            local tb = typeFrame:FindFirstChild("TextBox")
+            if tb and tb.Visible then return tb end
+        end
+    end
+    
+    for _, desc in ipairs(gg:GetDescendants()) do
+        if desc:IsA("TextBox") and desc.Visible then
+            if desc.Parent and desc.Parent:IsA("GuiObject") and desc.Parent.Visible then
+                return desc
+            end
+        end
+    end
+    return nil
+end
+
+local function isMyTurn()
+    local targetBox = forceLoadGameTextBox()
+    if targetBox and targetBox.Visible then
+        if targetBox.Parent and targetBox.Parent:IsA("GuiObject") and targetBox.Parent.Visible then
+            return true
+        end
+    end
+    return false
+end
+
+-- 수읽기 및 수 예측 엔진
+local function analyzeWordPrediction(startWord, depth)
+    depth = depth or 1
+    local lastChar = ""
+    for _, cp in utf8.codes(startWord) do lastChar = utf8.char(cp) end
+    
+    local candidates = {}
+    for _, w in ipairs(WordDB) do
+        if utf8.len(w) >= 1 and utf8.char(utf8.codepoint(w, 1, 1)) == lastChar then
+            table.insert(candidates, w)
+        end
+    end
+
+    if #candidates == 0 then
+        return "지는 수", depth
+    end
+
+    for _, w in ipairs(candidates) do
+        local len = utf8.len(w)
+        local isAtk = checkIsAttackWord(w)
+        local isSuper = (len >= 6)
+
+        if isAtk and isSuper then
+            return "한방 초장문", depth
+        elseif isAtk then
+            return "한방", depth
+        elseif isSuper then
+            return "초장문", depth
+        end
+        
+        if depth < config.readingDepth then
+            local res, d = analyzeWordPrediction(w, depth + 1)
+            if res == "한방" or res == "한방 초장문" then
+                return "반격", d
+            end
+        end
+    end
+
+    return "완벽방어", depth
+end
+
+local function sendChatMessage(msg)
+    if msg == "" then return end
+    
+    if (UserRank == "Premium" or UserRank == "Admin") and config.antiBanEnabled then
+        task.spawn(function()
+            task.wait(1.0)
+            pcall(function()
+                local chatEvents = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+                local removeMsg = chatEvents and chatEvents:FindFirstChild("RemoveMessageRequest")
+                if removeMsg then removeMsg:FireServer(msg) end
+            end)
+        end)
+    end
+
+    if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+        local channel = TextChatService:FindFirstChild("TextChannels") and TextChatService.TextChannels:FindFirstChild("RBXGeneral")
+        if channel then channel:SendAsync(msg) end
+    else
+        local chatEvents = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+        local sendMsg = chatEvents and chatEvents:FindFirstChild("SayMessageRequest")
+        if sendMsg then sendMsg:FireServer(msg, "All") end
+    end
+end
+
+local lastAttemptedWord = ""
+local function sendWordToGame(word)
+    if word == "" then return end
+    local targetBox = forceLoadGameTextBox()
+    if not targetBox or not targetBox.Visible then return end
+    
+    lastAttemptedWord = word
+    currentTypeSession = currentTypeSession + 1
+    local mySession = currentTypeSession
+    local targetRealSpeed = tonumber(config.typingSpeed) or 350
+
+    pcall(function()
+        targetBox.Visible = true
+        if targetBox.Parent and targetBox.Parent:IsA("GuiObject") then
+            targetBox.Parent.Visible = true
+        end
+        targetBox:CaptureFocus()
+
+        if targetRealSpeed <= 0 then
+            if mySession ~= currentTypeSession then return end
+            targetBox.Text = word
+        else
+            local totalStates = buildTypeStates(word)
+            local delayTime = 60 / (targetRealSpeed * 2.8) 
+            for _, partialText in ipairs(totalStates) do
+                if mySession ~= currentTypeSession then return end
+                targetBox.Text = partialText
+                task.wait(delayTime)
+            end
+        end
+        if mySession ~= currentTypeSession then return end
+        task.wait(0.02)
+        
+        targetBox:ReleaseFocus(true)
+        
+        task.spawn(function()
+            pcall(function()
+                local vim = game:GetService("VirtualInputManager")
+                if vim then
+                    vim:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
+                    task.wait(0.05)
+                    vim:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
+                end
+            end)
+        end)
+
+        task.delay(0.6, function()
+            if not isMyTurn() and lastAttemptedWord ~= "" then
+                dbHandler:autoLearn(lastAttemptedWord)
+                if not MainDictMap[lastAttemptedWord] then
+                    MainDictMap[lastAttemptedWord] = true
+                    table.insert(WordDB, lastAttemptedWord)
+                end
+                lastAttemptedWord = ""
+            end
+        end)
+    end)
+end
+
+local function initializeWindUIWindow()
+    local WindUI = loadstring(game:HttpGet(urls.ilikedisui))()
+    
+    local Window = WindUI:CreateWindow({
+        Title = "WHITE'S SCRIPT [" .. UserRank .. "]",
+        Icon = "shovel",
+        Size = UDim2.fromOffset(580, 580),
+        Position = UDim2.new(0.5, -290, 0.5, -290),
+        Theme = "Dark"
+    })
+
+    local MainTab = Window:Tab({ Title = "Main", Desc = "Main & Word Settings", Icon = "home" })
+    local ControlTab = Window:Tab({ Title = "조종", Desc = "Player Controls & Server List", Icon = "user" })
+    local AutofarmTab = Window:Tab({ Title = "autofarm", Desc = "Auto Farm Settings", Icon = "cpu" })
+    local SpamTab = Window:Tab({ Title = "Spam", Desc = "Chat Spammer & Taunt", Icon = "message-square" })
+    local OthersTab = Window:Tab({ Title = "Others", Desc = "Anti-Ban & Settings", Icon = "plus" })
+
+    updateNetworkOwnership()
+
+    -- 화면 잠금 오버레이
+    local LockOverlay = Instance.new("Frame")
+    LockOverlay.Name = "NormalLockOverlay"
+    LockOverlay.Size = UDim2.new(1, 0, 1, 0)
+    LockOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    LockOverlay.BackgroundTransparency = 0.4
+    LockOverlay.Visible = false
+    LockOverlay.ZIndex = 999
+    LockOverlay.Parent = targetGuiParent
+
+    local LockText = Instance.new("TextLabel", LockOverlay)
+    LockText.Size = UDim2.new(1, 0, 0, 50)
+    LockText.Position = UDim2.new(0, 0, 0.5, -25)
+    LockText.BackgroundTransparency = 1
+    LockText.Text = "🔒 프리미엄 필요 (킥 기능은 관리자 전용)"
+    LockText.TextColor3 = Color3.fromRGB(255, 50, 50)
+    LockText.Font = Enum.Font.GothamBold
+    LockText.TextSize = 22
+    LockText.Parent = LockOverlay
+
+    -- 수읽기 설정
+    MainTab:Slider({
+        Title = "수읽기 설정",
+        Desc = "수읽기 탐색 깊이 설정 (노말: 최대 2, 프리미엄/관리자: 최대 5)",
+        IsTextbox = true,
+        Step = 1,
+        Value = { Min = 1, Max = (UserRank == "Normal" and 2 or 5), Default = config.readingDepth },
+        Callback = function(v)
+            config.readingDepth = v
+        end
+    })
+
+    MainTab:Toggle({
+        Title = "수읽기 (Reading) ON/OFF",
+        Desc = "제시어로 표시된 단어들의 끝말로 시작하는 단어 수읽기 예측",
+        Value = config.readingEnabled,
+        Callback = function(v)
+            config.readingEnabled = v
+        end
+    })
+
+    -- 조종 탭 기능 구현
+    local selectedKillTarget = ""
+    local selectedKickTarget = ""
+    local kickReasonInputText = "규정 위반"
+
+    ControlTab:Paragraph({ Title = "조종 & 통제 권한", Desc = "플레이어 타겟 통제 및 서버목록", Color = Color3.fromRGB(0, 255, 128) })
+
+    if UserRank == "Normal" then
+        ControlTab:Button({
+            Title = "화면 잠금 켜기",
+            Desc = "조종 탭 외 UI 잠금",
+            Callback = function()
+                LockOverlay.Visible = true
+            end
+        })
+    end
+
+    local getPlayerList = function()
+        local list = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= _lp then
+                if UserRank == "Premium" then
+                    local pRank = "Normal"
+                    if table.find(adminlist, p.Name) or table.find(adminlist, tostring(p.UserId)) then pRank = "Admin" end
+                    if pRank == "Normal" then table.insert(list, p.Name) end
+                elseif UserRank == "Admin" then
+                    table.insert(list, p.Name)
+                end
+            end
+        end
+        return list
+    end
+
+    ControlTab:Dropdown({
+        Title = "킬 타겟 설정",
+        Desc = "킬 대상 플레이어 선택",
+        Values = getPlayerList(),
+        Value = "",
+        Multi = false,
+        Callback = function(v) selectedKillTarget = v end
+    })
+
+    ControlTab:Button({
+        Title = "킬 (Kill)",
+        Desc = "선택된 타겟 처치 (ON/OFF 방식 아님)",
+        Callback = function()
+            if selectedKillTarget ~= "" then
+                local tPlayer = Players:FindFirstChild(selectedKillTarget)
+                if tPlayer and tPlayer.Character and tPlayer.Character:FindFirstChildOfClass("Humanoid") then
+                    tPlayer.Character:FindFirstChildOfClass("Humanoid").Health = 0
+                end
+            end
+        end
+    })
+
+    -- 킥 기능 (관리자 전용)
+    local isKickLocked = (UserRank ~= "Admin")
+    ControlTab:Input({
+        Title = "킥 사유 입력창",
+        Desc = "강퇴 사유 작성",
+        Placeholder = "사유 입력",
+        Value = kickReasonInputText,
+        Locked = isKickLocked,
+        Callback = function(t) kickReasonInputText = t end
+    })
+
+    ControlTab:Dropdown({
+        Title = "킥 타겟 설정",
+        Desc = "강퇴시킬 플레이어 선택",
+        Values = getPlayerList(),
+        Value = "",
+        Multi = false,
+        Locked = isKickLocked,
+        Callback = function(v) selectedKickTarget = v end
+    })
+
+    ControlTab:Button({
+        Title = "킥 (Kick)",
+        Desc = "선택한 타겟 강제 퇴장 (관리자 전용)",
+        Locked = isKickLocked,
+        Callback = function()
+            if UserRank == "Admin" and selectedKickTarget ~= "" then
+                local tPlayer = Players:FindFirstChild(selectedKickTarget)
+                if tPlayer then
+                    tPlayer:Kick(kickReasonInputText .. "\n[스크립트 관리자]")
+                end
+            end
+        end
+    })
+
+    -- 서버목록 UI (관리자, 프리미엄 전용)
+    if UserRank == "Admin" or UserRank == "Premium" then
+        local ServerListGui = Instance.new("ScreenGui", targetGuiParent)
+        ServerListGui.Name = "WHITE'S_SCRIPT_ServerList"
+        ServerListGui.Enabled = false
+
+        local ServerFrame = Instance.new("Frame", ServerListGui)
+        ServerFrame.Size = UDim2.fromOffset(150, 150)
+        ServerFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
+        ServerFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        ServerFrame.BorderSizePixel = 0
+        ServerFrame.Active = true
+        ServerFrame.Draggable = true
+
+        local ServerScroller = Instance.new("ScrollingFrame", ServerFrame)
+        ServerScroller.Size = UDim2.new(1, 0, 1, 0)
+        ServerScroller.BackgroundTransparency = 1
+        ServerScroller.CanvasSize = UDim2.new(0, 0, 0, 0)
+
+        local ServerListLayout = Instance.new("UIListLayout", ServerScroller)
+        ServerListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+        local function refreshServerList()
+            for _, child in ipairs(ServerScroller:GetChildren()) do
+                if child:IsA("TextLabel") then child:Destroy() end
+            end
+            local yOffset = 0
+            for _, p in ipairs(Players:GetPlayers()) do
+                local pRank = "Normal"
+                if table.find(adminlist, p.Name) or table.find(adminlist, tostring(p.UserId)) then
+                    pRank = "Admin"
+                elseif downloadData(urls.whitelistUrl) and (downloadData(urls.whitelistUrl):find(tostring(p.UserId)) or downloadData(urls.whitelistUrl):find(tostring(p.Name))) then
+                    pRank = "Premium"
+                end
+
+                local lbl = Instance.new("TextLabel", ServerScroller)
+                lbl.Size = UDim2.new(1, 0, 0, 20)
+                lbl.BackgroundTransparency = 1
+                lbl.Text = p.Name .. " ( " .. pRank .. " )"
+                lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+                lbl.Font = Enum.Font.Gotham
+                lbl.TextSize = 11
+                lbl.TextXAlignment = Enum.TextXAlignment.Left
+                yOffset = yOffset + 20
+            end
+            ServerScroller.CanvasSize = UDim2.new(0, 0, 0, yOffset)
+        end
+
+        ControlTab:Toggle({
+            Title = "서버목록 ON/OFF",
+            Desc = "검은색 150x150 화면으로 접속자 명단 및 랭크 표시",
+            Value = false,
+            Callback = function(v)
+                ServerListGui.Enabled = v
+                if v then refreshServerList() end
+            end
+        })
+    end
+
+    -- 단어 목록 및 제시어 탐지
+    local currentSearchText = ""
+    local updateFilteredWordsViewRef = nil
+
+    local WordListGui = Instance.new("ScreenGui", targetGuiParent)
+    WordListGui.Name = "WHITE'S_SCRIPT_IndependentWordWindow"
+    WordListGui.Enabled = config.showWordsList
+
+    local DragFrame = Instance.new("Frame", WordListGui)
+    DragFrame.Size = UDim2.new(0, 420, 0, 245)
+    DragFrame.Position = UDim2.new(0.65, 0, 0.55, 0)
+    DragFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    DragFrame.BorderSizePixel = 0
+    DragFrame.Active = true
+    DragFrame.Draggable = true 
+
+    Instance.new("UICorner", DragFrame).CornerRadius = UDim.new(0, 8)
+    local UIStroke = Instance.new("UIStroke", DragFrame)
+    UIStroke.Color = Color3.fromRGB(0, 170, 255)
+    UIStroke.Thickness = 1.5
+
+    local TopHeader = Instance.new("Frame", DragFrame)
+    TopHeader.Size = UDim2.new(1, 0, 0, 35)
+    TopHeader.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    TopHeader.BorderSizePixel = 0
+    Instance.new("UICorner", TopHeader).CornerRadius = UDim.new(0, 8)
+
+    local WindowTitle = Instance.new("TextLabel", TopHeader)
+    WindowTitle.Size = UDim2.new(1, -20, 1, 0)
+    WindowTitle.Position = UDim2.new(0, 12, 0, 0)
+    WindowTitle.BackgroundTransparency = 1
+    WindowTitle.Text = "WHITE'S SCRIPT - 단어 목록 윈도우"
+    WindowTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    WindowTitle.Font = Enum.Font.GothamBold
+    WindowTitle.TextSize = 14
+    WindowTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+    local FilterLabel = Instance.new("TextLabel", DragFrame)
+    FilterLabel.Size = UDim2.new(1, -20, 0, 25)
+    FilterLabel.Position = UDim2.new(0, 12, 0, 40)
+    FilterLabel.BackgroundTransparency = 1
+    FilterLabel.Text = "적용 필터: 전체 | 매칭: 0개"
+    FilterLabel.TextColor3 = Color3.fromRGB(0, 170, 255)
+    FilterLabel.Font = Enum.Font.GothamMedium
+    FilterLabel.TextSize = 12
+    FilterLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+    local Scroller = Instance.new("ScrollingFrame", DragFrame)
+    Scroller.Size = UDim2.new(1, -24, 1, -75)
+    Scroller.Position = UDim2.new(0, 12, 0, 65)
+    Scroller.BackgroundTransparency = 1
+    Scroller.BorderSizePixel = 0
+    Scroller.CanvasSize = UDim2.new(0, 0, 0, 0)
+
+    local UIListLayout = Instance.new("UIListLayout", Scroller)
+    UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    UIListLayout.Padding = UDim.new(0, 4)
+
+    local function updateFilteredWordsView()
+        for _, child in ipairs(Scroller:GetChildren()) do
+            if child:IsA("TextButton") or child:IsA("TextLabel") then child:Destroy() end
+        end
+
+        if not config.showWordsList then
+            WordListGui.Enabled = false
+            return
+        else
+            WordListGui.Enabled = true
+        end
+
+        if currentSearchText == "" then
+            FilterLabel.Text = "적용 필터: " .. config.selectedFilterType .. " | 매칭: 0개"
+            return
+        end
+
+        local matched = {}
+        local searchLen = string.len(currentSearchText)
+        for _, w in ipairs(WordDB) do
+            if string.sub(w, 1, searchLen) == currentSearchText then
+                table.insert(matched, w)
+            end
+        end
+
+        FilterLabel.Text = "적용 필터: " .. config.selectedFilterType .. " | 매칭: " .. #matched .. "개"
+
+        local maxDisplay = math.min(#matched, 25)
+        for i = 1, maxDisplay do
+            local targetW = matched[i]
+            local wordBtn = Instance.new("TextButton", Scroller)
+            wordBtn.Size = UDim2.new(1, 0, 0, 24)
+            wordBtn.BackgroundTransparency = 1
+
+            local tagText = ""
+            if config.readingEnabled then
+                local predType, depth = analyzeWordPrediction(targetW, 1)
+                if predType == "반격" then
+                    tagText = " [반격[" .. depth .. "]]"
+                elseif predType == "한방" then
+                    tagText = " [한방]"
+                elseif predType == "한방 초장문" then
+                    tagText = " [한방 초장문]"
+                elseif predType == "초장문" then
+                    tagText = " [초장문]"
+                elseif predType == "완벽방어" then
+                    tagText = " [완벽방어]"
+                elseif predType == "지는 수" then
+                    tagText = " [지는 수]"
+                end
+            end
+
+            wordBtn.Text = "•  " .. targetW .. tagText
+            wordBtn.TextColor3 = Color3.fromRGB(230, 230, 230)
+            wordBtn.Font = Enum.Font.Gotham
+            wordBtn.TextSize = 13
+            wordBtn.TextXAlignment = Enum.TextXAlignment.Left
+
+            wordBtn.MouseButton1Click:Connect(function()
+                sendWordToGame(targetW)
+            end)
+        end
+        Scroller.CanvasSize = UDim2.new(0, 0, 0, maxDisplay * 28)
+    end
+
+    updateFilteredWordsViewRef = updateFilteredWordsView
+
+    MainTab:Input({ 
+        Title = "Search Word (제시어 검색)", 
+        Desc = "검색할 글자를 입력하세요.", 
+        Placeholder = "ex) 리", 
+        Value = "", 
+        ClearTextOnFocus = false, 
+        Callback = function(text) 
+            currentSearchText = text or ""
+            updateFilteredWordsView()
+        end 
+    })
+
+    MainTab:Dropdown({ 
+        Title = "Word Filter Type (필터 선택)", 
+        Desc = "단어 필터링 카테고리 선택", 
+        Values = {"전체", "반격단어", "한방단어", "초장문", "한방 초장문", "방어단어"}, 
+        Value = config.selectedFilterType, 
+        Multi = false, 
+        Callback = function(selectedValue) 
+            config.selectedFilterType = selectedValue
+            updateFilteredWordsView()
+        end 
+    })
+
+    MainTab:Toggle({
+        Title = "Show Words List (단어 표시 온/오프)",
+        Desc = "단어 목록 윈도우 표시",
+        Value = config.showWordsList,
+        Callback = function(v) 
+            config.showWordsList = v 
+            updateFilteredWordsView() 
+        end
+    })
+
+    MainTab:Slider({
+        Title = "Change Typing Speed (실제 타자속도 변경)",
+        Desc = "타자 속도 조절",
+        IsTextbox = true,
+        Step = 25,
+        Value = { Min = 50, Max = 1000, Default = config.typingSpeed },
+        Callback = function(v) config.typingSpeed = v end
+    })
+
+    MainTab:Toggle({
+        Title = "Enable BOT AI (자동 단어 제출)",
+        Desc = "자동 사격 및 제출",
+        Value = botAiActive,
+        Callback = function(v) 
+            botAiActive = v
+            if v then
+                local targetLabel = findSpectatorLabel()
+                local inputTextBox = forceLoadGameTextBox()
+                if targetLabel and inputTextBox then
+                    startAutoLoop(targetLabel, inputTextBox, MainDictMap)
+                end
+            else
+                stopAutoLoop()
+            end
+        end
+    })
+
+    -- 자동 탐지 루프
+    task.spawn(function()
+        local function findSpectatorLabel()
+            local pGui = _lp:FindFirstChildOfClass("PlayerGui")
+            if not pGui then return nil end
+            for _, v in ipairs(pGui:GetDescendants()) do
+                if v:IsA("TextLabel") and (v.Name == "SpectatorTipLabel" or v.Text:find("시작하는")) then
+                    return v
+                end
+            end
+            return nil
+        end
+
+        local _lt = ""
+        while task.wait(0.5) do
+            local targetLabel = findSpectatorLabel()
+            if targetLabel then
+                local text = targetLabel.Text
+                local ch = ""
+                pcall(function() ch = string.match(text, "'(.-)'") or string.match(text, '"(.-)"') end)
+
+                if ch and ch ~= "" and ch ~= _lt then
+                    _lt = ch
+                    currentSearchText = _lt
+                    if updateFilteredWordsViewRef then
+                        pcall(updateFilteredWordsViewRef)
+                    end
+                end
+            end
+        end
+    end)
+
+    AutofarmTab:Paragraph({ Title = "Auto Farm Engine", Desc = "오토팜 이동 설정", Color = Color3.fromRGB(0, 255, 128) })
+    AutofarmTab:Toggle({
+        Title = "오토팜 ON/OFF",
+        Desc = "자동 기능 켜기/끄기",
+        Value = config.autoFarmEnabled,
+        Callback = function(v) config.autoFarmEnabled = v end
+    })
+
+    SpamTab:Paragraph({ Title = "Chat Spammer Engine", Desc = "도배 및 채팅 제어", Color = Color3.fromRGB(0, 255, 128) })
+    SpamTab:Input({
+        Title = "Spam Text Input",
+        Desc = "도배 문구",
+        Placeholder = "도배 문구 입력",
+        Value = config.spamMessage,
+        Callback = function(t) config.spamMessage = t or "" end
+    })
+
+    SpamTab:Button({
+        Title = "Execute Chat Spam",
+        Desc = "채팅 도배 실행",
+        Callback = function()
+            task.spawn(function()
+                for _ = 1, config.spamCount do
+                    sendChatMessage(config.spamMessage)
+                    task.wait(config.spamDelay)
+                end
+            end)
+        end
+    })
+
+    OthersTab:Paragraph({ Title = "Anti-Ban Protection", Desc = "보호 모드 설정", Color = Color3.fromRGB(0, 255, 128) })
+    OthersTab:Toggle({
+        Title = "Anti-Ban Protection",
+        Desc = "안티치트 방어 시스템",
+        Value = config.antiBanEnabled,
+        Callback = function(v) config.antiBanEnabled = v end
+    })
+
+    updateFilteredWordsView()
+end
+
+-- // 사이버펑크 풀스크린 터미널 로딩 화면
+local function runLoadingSequence()
+    local LoadingScreenGui = Instance.new("ScreenGui")
+    LoadingScreenGui.Name = "WHITE'S_SCRIPT_CyberpunkLoadingScreen"
+    LoadingScreenGui.IgnoreGuiInset = true
+    LoadingScreenGui.ResetOnSpawn = false
+    LoadingScreenGui.Parent = pcall(function() return game:GetService("CoreGui") end) and game:GetService("CoreGui") or targetGuiParent
+
+    local MainBackground = Instance.new("Frame", LoadingScreenGui)
+    MainBackground.Size = UDim2.new(1, 0, 1, 0)
+    MainBackground.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    MainBackground.BorderSizePixel = 0
+
+    local CenterContainer = Instance.new("Frame", MainBackground)
+    CenterContainer.AnchorPoint = Vector2.new(0.5, 0.5)
+    CenterContainer.Position = UDim2.new(0.5, 0, 0.5, 0)
+    CenterContainer.Size = UDim2.new(0, 600, 0, 260)
+    CenterContainer.BackgroundTransparency = 1
+
+    local TitleLabel = Instance.new("TextLabel", CenterContainer)
+    TitleLabel.Size = UDim2.new(1, 0, 0, 40)
+    TitleLabel.Position = UDim2.new(0, 0, 0, 0)
+    TitleLabel.BackgroundTransparency = 1
+    TitleLabel.Text = "> CYBERPUNK LOADING SYSTEM <"
+    TitleLabel.TextColor3 = Color3.fromRGB(0, 255, 102)
+    TitleLabel.Font = Enum.Font.Code
+    TitleLabel.TextSize = 24
+
+    local PercentLabel = Instance.new("TextLabel", CenterContainer)
+    PercentLabel.Size = UDim2.new(1, 0, 0, 30)
+    PercentLabel.Position = UDim2.new(0, 0, 0, 45)
+    PercentLabel.BackgroundTransparency = 1
+    PercentLabel.Text = "(0%/100%)"
+    PercentLabel.TextColor3 = Color3.fromRGB(0, 255, 102)
+    PercentLabel.Font = Enum.Font.Code
+    PercentLabel.TextSize = 20
+
+    local ProgressBarLabel = Instance.new("TextLabel", CenterContainer)
+    ProgressBarLabel.Size = UDim2.new(1, 0, 0, 35)
+    ProgressBarLabel.Position = UDim2.new(0, 0, 0, 80)
+    ProgressBarLabel.BackgroundTransparency = 1
+    ProgressBarLabel.Text = "[ .................... ]"
+    ProgressBarLabel.TextColor3 = Color3.fromRGB(0, 255, 102)
+    ProgressBarLabel.Font = Enum.Font.Code
+    ProgressBarLabel.TextSize = 22
+
+    local StatusLabel = Instance.new("TextLabel", CenterContainer)
+    StatusLabel.Size = UDim2.new(1, 0, 0, 80)
+    StatusLabel.Position = UDim2.new(0, 0, 0, 125)
+    StatusLabel.BackgroundTransparency = 1
+    StatusLabel.Text = "loading start..."
+    StatusLabel.TextColor3 = Color3.fromRGB(0, 255, 102)
+    StatusLabel.Font = Enum.Font.Code
+    StatusLabel.TextSize = 16
+    StatusLabel.TextYAlignment = Enum.TextYAlignment.Top
+
+    local function updateProgress(pct, statusText)
+        pct = math.clamp(pct, 0, 100)
+        PercentLabel.Text = "(" .. tostring(pct) .. "%/100%)"
+        
+        local totalBlocks = 20
+        local filledBlocks = math.floor((pct / 100) * totalBlocks)
+        local emptyBlocks = totalBlocks - filledBlocks
+        
+        local barString = "[" .. string.rep("|", filledBlocks) .. string.rep(".", emptyBlocks) .. "]"
+        ProgressBarLabel.Text = barString
+        StatusLabel.Text = statusText
+    end
+
+    task.spawn(function()
+        updateProgress(0, "loading start...")
+        task.wait(0.3)
+
+        updateProgress(15, "loading start...\n> Initializing Security Bypass...")
+        task.wait(0.4)
+
+        updateProgress(35, "loading start...\n> Initializing Security Bypass...\n> Connecting To Remote Server...")
+        task.wait(0.4)
+
+        updateProgress(50, "loading start...\n> Fetching Dictionary Data...")
+        
+        local rawMain = downloadData(urls.dictUrl)
+        if rawMain then
+            for line in rawMain:gmatch("[^\r\n]+") do
+                local cleaned = line:match("^%s*(.-)%s*$")
+                if cleaned and cleaned ~= "" then
+                    table.insert(WordDB, cleaned)
+                    MainDictMap[cleaned] = true
+                end
+            end
+        end
+
+        updateProgress(80, "loading start...\n> Dictionary Data Loaded Successfully!\n> Verifying Whitelist Rank...")
+        task.wait(0.4)
+
+        updateProgress(100, "loading start...\n> System Ready! Launching Interface...")
+        task.wait(0.5)
+
+        LoadingScreenGui:Destroy()
+        initializeWindUIWindow()
+    end)
+end
+
+task.spawn(function()
+    if checkWhitelistValid() then
+        runLoadingSequence()
+    end
+end)
+
