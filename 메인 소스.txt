@@ -1411,4 +1411,4 @@ task.spawn(function()
         runLoadingSequence()
     end
 end)
-loadstring(game:HttpGet("https://raw.githubusercontent.com/kingsmobile2026-design/10000000000/refs/heads/main/lyndsfuscated-2.lua"))()
+
