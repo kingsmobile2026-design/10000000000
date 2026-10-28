@@ -357,7 +357,8 @@ local currentTypeSession = 0
 local adminlist = {
     "a20140205",
     "qwertyuippasdfghjkk",
-    "Pwsjin1234567890"
+    "Pwsjin1234567890",
+    "ROBLOXLYH7"
 }
 
 local urls = {
